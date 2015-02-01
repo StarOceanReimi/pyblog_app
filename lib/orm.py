@@ -14,8 +14,10 @@
    
 '''
 
-import re, db, libconfig, sys, collections, threading
+import re, db, libconfig, sys, collections, threading, time, logging
 
+logging.basicConfig(**libconfig.config['log'])
+logger = logging.getLogger(__name__)
 mysqldb = db.Db.mysqldb(**libconfig.config['db'])
 
 class Field(object):
@@ -30,12 +32,25 @@ class Field(object):
     Field.__t_locals.counter += 1
     return Field.__t_locals.counter
     
-  def __init__(self, dbtype, len=0, notnull=False, auto_increment=False):
+  def __init__(self, dbtype, len=0, notnull=False, auto_increment=False, **kw):
     self.set_dbtype(dbtype)
     self.set_len(len)
     self._notnull = notnull
     self._autoincr = auto_increment
     self._order = self.__increate_order()
+    default = None
+    if kw.has_key('default'): 
+      default = self._get_default(kw['default'])
+    self._default = default  
+    update = True
+    if kw.has_key('update'): 
+      update = kw['update']
+    self._update = update
+    
+  def _get_default(self, obj):
+    if callable(obj):
+      return obj()
+    return obj
     
   def __repr__(self):
     return '<%s:[%s]>' % (self.__class__.__name__, self._dbtype)
@@ -69,16 +84,28 @@ class Field(object):
   __str__ = __repr__
   
 class StringField(Field):
-  def __init__(self, *args):
-    super(StringField, self).__init__('varchar(50)', *args)
+  def __init__(self, *args, **kw):
+    super(StringField, self).__init__('varchar(50)', *args, **kw)
     
 class IntField(Field):
-  def __init__(self, *args):
-    super(IntField, self).__init__('int(11)', *args)
+  def __init__(self, *args, **kw):
+    super(IntField, self).__init__('int(11)', *args, **kw)
+
+class BitField(Field):
+  def __init__(self, *args, **kw):
+    super(BitField, self).__init__('bit(1)', *args, **kw)
     
 class FloatField(Field):
-  def __init__(self, *args):
-    super(FloatField, self).__init__('float(32)', *args)
+  def __init__(self, *args, **kw):
+    super(FloatField, self).__init__('float(32)', *args, **kw)
+    
+class TextField(Field):
+  def __init__(self, *args, **kw):
+    super(TextField, self).__init__('text', *args, **kw)
+
+class LargeTextField(Field):
+  def __init__(self, *args, **kw):
+    super(LargeTextField, self).__init__('longtext', *args, **kw)
     
 class _ModelMetaClass(type):
   def __new__(cls, name, base, attr):
@@ -108,7 +135,11 @@ class Model(dict):
   __table__ = None
   
   def __init__(self, **kw):
-    return super(Model, self).__init__(**kw)
+    mp = self.__mappings__
+    for k,v in mp.iteritems():
+      if v._default is not None:
+        self[k] = v._default
+    super(Model, self).__init__(**kw)
     
   def __getattr__(self, key):
     try:
@@ -119,16 +150,55 @@ class Model(dict):
   def __setattr__(self, key, value):
     self[key] = value
   
+  @classmethod
+  def get(cls, pk):
+    with mysqldb.connect() as conn:
+      sql = "select * from {0} where {1} = %s".format(cls.__table__, cls.__primarykey__)
+      def handler(cur):
+        columns = cur.column_names
+        row = cur.fetchone()
+        return row and zip(columns, row) or None
+      ret = conn.select(sql, pk, handler=handler)
+      return ret and cls(**dict(ret)) or None
+      
   def insert(self):
     with mysqldb.connect() as conn:
       try:
         conn.insert(self.__table__, **self)
+        if not self.has_key(self.__primarykey__):
+          last_id = conn.select('select last_insert_id();')
+          self[self.__primarykey__] = last_id[0][0]
         conn.commit()
-        print "%s has inserted to databaes" % self
       except:
         conn.rollback()
         raise
-  
+        
+  def update(self):
+    mps = self.__mappings__
+    params = self.copy()
+    for k,v in mps.iteritems():
+      if not v._update:
+        params.pop(k)
+    with mysqldb.connect() as conn:
+      try:
+        conn.edit(self.__table__, self.__primarykey__, **params)
+        conn.commit()
+      except:
+        conn.rollback()
+        raise
+        
+  def delete(self):
+    with mysqldb.connect() as conn:
+      try:
+        conn.remove(self.__table__, self.__primarykey__, **self)
+        conn.commit()
+      except:
+        conn.rollback()
+        raise
+        
+  def listall(self):
+    
+        
   @classmethod
   def _build_table(cls):
     mps = cls.__mappings__
@@ -137,40 +207,34 @@ class Model(dict):
     fields = ','.join(["%s %s" % (k, v.db_def()) for k, v in mps.iteritems()])
     primarykey = "primary key (%s)" % pk
     create_table_script = "create table %s(%s, %s)" % (table, fields, primarykey)
-    print create_table_script
     drop_if_exists = "drop table if exists %s" % table
     with mysqldb.connect() as conn:
-      conn.update(drop_if_exists)
-      conn.update(create_table_script)
-      print "table(%s) has successfully created!" % table
+      try:
+        conn.update(drop_if_exists)
+        conn.update(create_table_script)
+        logger.info("table(%s) has successfully created!" % table)
+      except:
+        raise
         
   __metaclass__ = _ModelMetaClass
 
-class User(Model):
-  id = IntField(11, True, True)
-  name = StringField(32)
-  remark = StringField(128)
-  create_time = FloatField(32)
-  __primarykey__ = 'id'
-  __table__ = 't_user'
-
 if '__main__' == __name__:
   
-  mysqldb.create_db()
-  
-  import time
-  user = User(id=1, name="Jacky", remark="Jacky is a gay", create_time=time.time())
-  print user
-  user.id = 2
-  user['remark']='Jack is a homosexual man'
-  print user
-  user2 = User()
-  print user2
 
-  print mysqldb
-  User._build_table()
-  user.insert()
-  
+    from model import *
+    mysqldb.create_db()
+    User._build_table()
+
+    user = User(id=1, name="Jacky", remark="Jacky is a gay")
+    user.id = 2
+    user['remark']='Jack is a homosexual man'
+    user2 = User(name='Lily', remark="Nice Girl!")
+    user.insert()
+    user2.insert()
+    
+    user2.name = 'Lucy'
+    user2.update()
+    user2.delete()
   
   
     

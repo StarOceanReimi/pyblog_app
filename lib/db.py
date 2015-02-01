@@ -22,7 +22,7 @@ import libconfig
 import logging
 
 logging.basicConfig(**libconfig.config['log'])
-
+logger = logging.getLogger(__name__)
 class Db(object):
   @staticmethod
   def mysqldb(**kw):
@@ -53,7 +53,7 @@ class MysqlDb(Db):
     cur.execute(drop_if_exists)
     create_script = "create database %s charset = %s" % (_db_name, encoding)
     cur.execute(create_script)
-    logging.info('database(%s) has successfully created!', _db_name)
+    logger.info('database(%s) has successfully created!', _db_name)
     self._db_info['database'] = _db_name
     
 class MysqlConn(object):
@@ -78,26 +78,43 @@ class MysqlConn(object):
     sql = "insert into {0}({1}) values({2})"
     key = kw.keys()
     return sql.format(tname, ','.join(key), ','.join(map(lambda x: "%({})s".format(x), key)))
-  
+    
+  @staticmethod
+  def _buildEditCmd(tname, condition=None, **kw):
+    sql = "update {0} set {1} {2}"
+    key = ['='.join([k, "%({})s".format(k)]) for k in kw.keys()]
+    where = ''
+    if isinstance(condition, Condition):
+      where = "where " + condition.tostr()
+    return sql.format(tname, ','.join(key), where)
+    
   def insert(self, tname, **kw):
     sql = MysqlConn._buildInsertCmd(tname, **kw)
     with self._cursor() as cur:
       cur.execute(sql, kw)
-      logging.debug('sql: %s , args=%s', sql, str(kw))
+      logger.debug('sql: %s , args=%s', sql, str(kw))
+      
+  def edit(self, tname, pk, **kw):
+    sql = MysqlConn._buildEditCmd(tname, c(pk), **kw)
+    with self._cursor() as cur:
+      cur.execute(sql, kw)
+      logger.debug('sql: %s , args=%s', sql, str(kw))
+      
+  def remove(self, tname, pk, **kw):
+    sql = "delete from {0} where {1} = %({1})s".format(tname, pk)
+    with self._cursor() as cur:
+      cur.execute(sql, kw)
+      logger.debug('sql: %s , args=%s', sql, str(kw))
       
   def update(self, stmt, *args):
     with self._cursor() as cur:
       cur.execute(stmt, args)
-      logging.debug('sql: %s , args=%s', stmt, str(args))
+      logger.debug('sql: %s , args=%s', stmt, str(args))
     
   def select(self, stmt, *args, **kw):
     with self._cursor() as cur:
       cur.execute(stmt, args)
-      result_handler = None
-      for x in kw.values():
-        if callable(x):
-          result_handler = x
-          break
+      result_handler = kw.has_key('handler') and kw['handler'] or None
       if result_handler and callable(result_handler):
         ret = result_handler(cur)
         return ret
@@ -124,17 +141,38 @@ class MysqlConn(object):
       return self.cursor
     def __exit__(self, type, value, tback):
       self.cursor.close()
+
+def c(k, va=None, op='='):
+  return Condition(k, va, op)
+
+class Condition(object):
+  def __init__(self, key, va=None, operator='='):
+    self._str = "%s %s %s" % (key, operator, "%({})s".format(va if va else key))
+  
+  def _and(self, condition):
+    self._str += ' and ' + condition._str
+    return self
     
+  def _or(self, condition):
+    self._str += ' or ' + condition._str
+    return self
+    
+  def tostr(self):
+    return self._str;
+
 
 if __name__ == '__main__':
+    
+  print MysqlConn._buildEditCmd('t_user', c('id'), user='Ashely', id=1)
   
-  mysqldb = Db.mysqldb(**libconfig.config['db'])
-  try:
-    conn = mysqldb.connect()
-  except mysql.connector.errors.ProgrammingError, pe:
-    error_class = pe.__class__
-    print '%s.%s: %s' % (error_class.__module__, error_class.__name__, pe.__str__())
-    mysqldb.create_db()
+  if False:
+    mysqldb = Db.mysqldb(**libconfig.config['db'])
+    try:
+      conn = mysqldb.connect()
+    except mysql.connector.errors.ProgrammingError, pe:
+      error_class = pe.__class__
+      print '%s.%s: %s' % (error_class.__module__, error_class.__name__, pe.__str__())
+      mysqldb.create_db()
   
 
 

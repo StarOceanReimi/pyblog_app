@@ -7,6 +7,6 @@ config = {
   },
   'log' : {
     'level' : 20, #logging.INFO
-    'format' : '%(asctime)s %(levelname)s %(name)s - %(message)s'
+    'format' : '%(asctime)s %(levelname)s [Module:%(name)s] - %(message)s'
   }
 }
