@@ -18,26 +18,44 @@ Codes are going to be like this:
   
 '''
 import mysql.connector
+import libconfig
+import logging
+
+logging.basicConfig(**libconfig.config['log'])
 
 class Db(object):
   @staticmethod
-  def mysqldb(un, pa, db, **kw):
-    return MysqlDb(un, pa, db, **kw)
+  def mysqldb(**kw):
+    return MysqlDb(**kw)
     
-  
 class MysqlDb(Db):
 
   _db_info = None
   
-  def __init__(self, un, pa, db, **kw):
-    _dict = dict(user=un, password=pa, database=db)
-    _dict.update(kw)
+  def __init__(self, **kw):
+    _dict = dict(**kw)
     self._db_info = _dict
     
   def connect(self):
     conn = mysql.connector.connect(**self._db_info)
     return MysqlConn(conn)
- 
+  
+  def create_db(self, database=None, encoding='utf8'):
+    _db_name = database;
+    if not _db_name:
+      if self._db_info.has_key('database'):
+        _db_name = self._db_info.pop('database')
+      else:
+        raise AttributeError('can find database name in dict! you must specifically input a database name to create database')
+    conn = mysql.connector.connect(**self._db_info)
+    cur = conn.cursor();
+    drop_if_exists = "drop database if exists %s;" % _db_name
+    cur.execute(drop_if_exists)
+    create_script = "create database %s charset = %s" % (_db_name, encoding)
+    cur.execute(create_script)
+    logging.info('database(%s) has successfully created!', _db_name)
+    self._db_info['database'] = _db_name
+    
 class MysqlConn(object):
   
   _conn = None
@@ -65,10 +83,12 @@ class MysqlConn(object):
     sql = MysqlConn._buildInsertCmd(tname, **kw)
     with self._cursor() as cur:
       cur.execute(sql, kw)
-  
+      logging.debug('sql: %s , args=%s', sql, str(kw))
+      
   def update(self, stmt, *args):
     with self._cursor() as cur:
       cur.execute(stmt, args)
+      logging.debug('sql: %s , args=%s', stmt, str(args))
     
   def select(self, stmt, *args, **kw):
     with self._cursor() as cur:
@@ -108,8 +128,13 @@ class MysqlConn(object):
 
 if __name__ == '__main__':
   
-  mysqldb = Db.mysqldb('root', 'root', 'test', use_unicode=True)
-  conn = mysqldb.connect()
+  mysqldb = Db.mysqldb(**libconfig.config['db'])
+  try:
+    conn = mysqldb.connect()
+  except mysql.connector.errors.ProgrammingError, pe:
+    error_class = pe.__class__
+    print '%s.%s: %s' % (error_class.__module__, error_class.__name__, pe.__str__())
+    mysqldb.create_db()
   
 
 
