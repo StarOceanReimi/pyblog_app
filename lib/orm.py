@@ -195,10 +195,23 @@ class Model(dict):
       except:
         conn.rollback()
         raise
-        
-  def listall(self):
-    
-        
+  
+  @classmethod
+  def listall(cls):
+    sql = "select * from %s" % cls.__table__
+    def handler(cur):
+      cols = cur.column_names
+      rows = cur.fetchall()
+      return [cls(**dict(zip(cols, row))) for row in rows]
+      
+    with mysqldb.connect() as conn:
+      try:
+        return conn.select(sql, handler=handler)
+        conn.commit()
+      except:
+        conn.rollback()
+        raise
+          
   @classmethod
   def _build_table(cls):
     mps = cls.__mappings__
@@ -217,14 +230,31 @@ class Model(dict):
         raise
         
   __metaclass__ = _ModelMetaClass
+  
+class View(object):
+  '''
+    example code:
+      View.table('t_user').select() -> [{ ... }]
+      View.table('t_user').orderby(order(field, asc/desc), [order...]).select() -> [{ ... }]
+      View.table('t_user').limit(start, max).orderby(..).select() -> [{ ... }]
+      View.table('t_user').filter(stmt(field, op, value)).select() -> [{ ... }]
+      View.table(t1).group().filter().select() -> [ [{ ... }], [{ ... }] ]
+      View.join_table((t1, alias), (t2, alias), join_type).select() -> [{ ... }]
+      View.sql(sql, list/dict, **kw)
+  '''
+  pass
 
 if '__main__' == __name__:
-  
-
-    from model import *
-    mysqldb.create_db()
-    User._build_table()
-
+  from model import *
+  mysqldb.create_db()
+  User._build_table()
+  print User.listall()
+  user = User(id=1, name="Jacky", remark="Jacky is a gay")
+  user.insert()
+  user2 = User(name='Lily', remark="Nice Girl!")
+  user2.insert()
+  print User.listall()
+  if False:
     user = User(id=1, name="Jacky", remark="Jacky is a gay")
     user.id = 2
     user['remark']='Jack is a homosexual man'
@@ -235,7 +265,7 @@ if '__main__' == __name__:
     user2.name = 'Lucy'
     user2.update()
     user2.delete()
-  
+    
   
     
     
