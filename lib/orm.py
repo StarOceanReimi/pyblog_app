@@ -369,7 +369,13 @@ class Model(dict):
         raise
         
   __metaclass__ = _ModelMetaClass
-  
+
+class FilterDict(dict):
+  def __getitem__(self, key):
+    if not self.has_key(key) and isinstance(key, FilterClass):
+      key = key.get_aliasedname()
+    return super(FilterDict, self).__getitem__(key)
+      
 class View(object):
   '''
     View is a wrapper class that help check data in 
@@ -395,10 +401,13 @@ class View(object):
   '''
   __tablenames__ = []
   __tablealias__ = []
+  __tablemeta__ = []
   __sqlstmt = None
   __sqlargs = []
   __sqlnamedargs = {}
   __ret_cols = None
+  __order = None
+  __limit = None
   __where = None
   
   def __init__(self, *args):
@@ -409,37 +418,57 @@ class View(object):
       else:
         self.__tablenames__.append(x.__table__)
         self.__tablealias__.append(x.__name__)
-        
+        self.__tablemeta__.append(x.__mappings__)
+    
+  
+  def limit(self, start, max):
+    limit_sql = "limit {0}, {1}"
+    self.__limit = limit_sql.format(start, max)
+    return self
+    
   @classmethod
   def sql(cls, stmt, *args, **kw):
     self.__sqlstmt = stmt
     self.__sqlargs = args
     
-  def columns(self, *cols, **kw):
-    _cols = None
-    if kw.has_key('mapfunc'):
-      _cols = map(kw['mapfunc'], cols)
-    else:
-      _cols = map(lambda c: isinstance(c, FilterClass) and c.get_aliasedname() or c, cols)
-      
-    __ret_cols = _cols
+  def all_columns(self):
+    cols = []
+    for t_alias, t_meta in zip(self.__tablealias__, self.__tablemeta__):
+      cols.append(','.join(["{0}.{1} as '{0}.{1}'".format(t_alias, x) for x in t_meta.iterkeys()]))
+    return ','.join(cols)  
+  
+  def orderby(self, *args, **kw):
+    order_sql = self.__order is None and "order by %s" or ", %s"
+    print kw['asc']
+    order = (kw.has_key('asc') and kw['asc']) and 'asc' or 'desc'
+    fields = []
+    tn = len(self.__tablenames__)
+    for x in args:
+      if tn > 1 and isinstance(x, FilterClass):
+        fields.append(x.get_aliasedname())
+      else:
+        fields.append(x.get_name())
+    self.__order = order_sql % ','.join(["%s %s" % (x, order) for x in fields])
     return self
   
   def select(self):
-    sql = "select {} from {} {}"
-    cols = ','.join(self.__ret_cols) if self.__ret_cols is not None else '*'
+    sql = "select {} from {} {} {} {}"
     tables = None
     if len(self.__tablenames__) > 1:
+      cols = self.all_columns()
       tables = ','.join(['%s as %s' % (x, y) for x, y in zip(self.__tablenames__, self.__tablealias__)])
     else:  
+      cols = ','.join(self.__ret_cols) if self.__ret_cols is not None else '*'  
       tables = ','.join(self.__tablenames__)
     where = self.__where if self.__where is not None else ''
-    sql = sql.format(cols, tables, where)
+    order = self.__order if self.__order is not None else ''
+    limit = self.__limit if self.__limit is not None else ''
+    sql = sql.format(cols, tables, where, order, limit)
 
     def handler(cur):
       cols = cur.column_names
       rows = cur.fetchall()
-      return [dict(zip(cols, row)) for row in rows]
+      return [FilterDict(zip(cols, row)) for row in rows]
       
     ret = []
     with mysqldb.connect() as conn:
@@ -484,7 +513,10 @@ if '__main__' == __name__:
   from model import *
   #filters = (User.id >= 1) & (User.id <= 10) & (Topic.id != 50) | (User.name == 'User')
 
-  print View(User).filter(User.id == 1).select()
+  #v = View(User, Topic).filter(User.id == Topic.post_by).orderby(Topic.create_time, asc=False).limit(0,20).select()
+  v = View(Topic).filter(Topic.post_by == 1).select()
+  logger.info(v)
+  
   #print v._View__sqlnamedargs
 
 
