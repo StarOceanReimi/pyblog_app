@@ -91,29 +91,31 @@ class MysqlConn(object):
   def insert(self, tname, **kw):
     sql = MysqlConn._buildInsertCmd(tname, **kw)
     with self._cursor() as cur:
-      cur.execute(sql, kw)
       logger.debug('sql: %s , args=%s', sql, str(kw))
+      cur.execute(sql, kw)
       
   def edit(self, tname, pk, **kw):
     sql = MysqlConn._buildEditCmd(tname, c(pk), **kw)
     with self._cursor() as cur:
-      cur.execute(sql, kw)
       logger.debug('sql: %s , args=%s', sql, str(kw))
+      cur.execute(sql, kw)
       
   def remove(self, tname, pk, **kw):
     sql = "delete from {0} where {1} = %({1})s".format(tname, pk)
     with self._cursor() as cur:
-      cur.execute(sql, kw)
       logger.debug('sql: %s , args=%s', sql, str(kw))
+      cur.execute(sql, kw)
       
   def update(self, stmt, *args):
     with self._cursor() as cur:
-      cur.execute(stmt, args)
       logger.debug('sql: %s , args=%s', stmt, str(args))
-    
+      cur.execute(stmt, args)
+      
   def select(self, stmt, *args, **kw):
     with self._cursor() as cur:
-      cur.execute(stmt, args)
+      agruments = (len(args) == 1 and isinstance(args[0], dict)) and args[0] or args
+      logger.debug('sql: %s , args=%s', stmt, str(agruments))
+      cur.execute(stmt, agruments)
       result_handler = kw.has_key('handler') and kw['handler'] or None
       if result_handler and callable(result_handler):
         ret = result_handler(cur)

@@ -6,7 +6,7 @@ config = {
     'use_unicode' : True
   },
   'log' : {
-    'level' : 20, #logging.INFO
+    'level' : 10, #logging.INFO
     'format' : '%(asctime)s %(levelname)s [Module:%(name)s] - %(message)s'
   }
 }

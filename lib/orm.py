@@ -128,6 +128,145 @@ class _ModelMetaClass(type):
     
   def __init__(cls, name, base, attr):
     return super(_ModelMetaClass, cls).__init__(name, base, attr)
+
+  def __getattr__(cls, key):
+    return FilterClass(cls, key)
+
+class FilterClass(object):
+  
+  __name = None
+  __class = None
+  __value = None
+  __op = None
+  __alias = None
+  __valuename = None
+  __other_filters = []
+  __concatsign = ''
+
+  def __init__(self, cls, name):
+    self.__name = name
+    self.__class = cls
+    self.__alias = cls.__name__
+    self.__valuename = "%s_0" % name
+    
+  def __eq__(self, value):
+    self.__value = value
+    self.__op = '='
+    return self
+    
+  def __gt__(self, value):
+    self.__value = value
+    self.__op = '>'
+    return self
+
+  def __lt__(self, value):
+    self.__value = value
+    self.__op = '<'
+    return self
+    
+  def __ne__(self, value):
+    self.__value = value
+    self.__op = '!='
+    return self
+    
+  def __ge__(self, value):
+    self.__value = value
+    self.__op = '>='
+    return self
+    
+  def __le__(self, value):
+    self.__value = value
+    self.__op = '<='
+    return self
+  
+  def like(self, value):
+    self.__value = value
+    self.__op = 'like'
+    return self
+  
+  def in_(self, value):
+    value = isinstance(value, list) and value or list(value)
+    self.__value = value
+    self.__op = 'in'
+    return self
+    
+  def get_concatsign(self):
+    return self.__concatsign
+  
+  def set_concatsign(self, concatsign):
+    self.__concatsign = concatsign
+  
+  def __and__(self, value):
+    return self.__concate__(value, 'and')
+    
+  def __or__(self, value):
+    return self.__concate__(value, 'or')
+
+  def __concate__(self, value, concatesign):
+    if not isinstance(value, FilterClass):
+      raise TypeError('type must be a FilterClass')
+    for p in self:
+      if p.get_valuename() == value.get_valuename():
+        value.set_valuename(self.__new_valuename())
+        break
+
+    value.set_concatsign(concatesign)
+    self.__other_filters.append(value)
+    return self
+
+  def __new_valuename(self):
+    vn = self.__valuename
+    return vn[0:-1] + str(len(self.__other_filters)+1)
+    
+  def __iter__(self):
+    return self.__generator__()
+
+  def __generator__(self):
+    yield self
+    for other in self.__other_filters:
+      yield other
+    raise StopIteration()
+
+  def get_op(self):
+    return self.__op;
+
+  def set_alias(self, alias):
+    self.__alias = alias
+    
+  def get_name(self):
+    return self.__name
+    
+  def get_valuename(self):
+    return self.__valuename
+    
+  def set_valuename(self, name):
+    self.__valuename = name
+  
+  def get_aliasedname(self):
+    return "%s.%s" % (self.__alias, self.__name)
+
+  def tofilter(self, tablealias=False):
+    filter = None
+    property = None
+    if tablealias:
+      property = self.get_aliasedname()
+    else:
+      property = self.__name
+    
+    if self.__op == 'in':
+      filterstr = "{0} {1} ({2})".format(property, self.__op, ','.join(['%s' for x in self.__value]))
+    elif isinstance(self.__value, FilterClass):
+      filterstr = "{0} {1} {2}".format(self.get_aliasedname(), self.__op, self.__value.get_aliasedname())
+    else:
+      filterstr = "{0} {1} %({2})s".format(property, self.__op, self.get_valuename())
+    return (filterstr, self.__value)
+                             
+    
+  def __str__(self):
+    return "FilterClass for (%s.%s.%s)" % (self.__class.__module__, self.__class.__name__, self.__name)
+    
+  __repr__ = __str__
+  
       
 class Model(dict):
   
@@ -230,31 +369,162 @@ class Model(dict):
         raise
         
   __metaclass__ = _ModelMetaClass
-  
+
+class FilterDict(dict):
+  def __getitem__(self, key):
+    if not self.has_key(key) and isinstance(key, FilterClass):
+      key = key.get_aliasedname()
+    return super(FilterDict, self).__getitem__(key)
+      
 class View(object):
   '''
-    example code:
-      View.table('t_user').select() -> [{ ... }]
-      View.table('t_user').orderby(order(field, asc/desc), [order...]).select() -> [{ ... }]
-      View.table('t_user').limit(start, max).orderby(..).select() -> [{ ... }]
-      View.table('t_user').filter(stmt(field, op, value)).select() -> [{ ... }]
-      View.table(t1).group().filter().select() -> [ [{ ... }], [{ ... }] ]
-      View.join_table((t1, alias), (t2, alias), join_type).select() -> [{ ... }]
-      View.sql(sql, list/dict, **kw)
+    View is a wrapper class that help check data in 
+    database more conveniently. The sample code is list
+    below:
+    
+      Initiate instance:
+        view = View(Class*) -> Class should have the attribute __table__
+                               or inherit from orm.Model 
+        view = View('tablename'*) 
+        view = View.sql(sql_statement, *args, **kw)
+        view = View.join(['tablename', 'join_key']+) 
+      
+      Useful methods:
+        filter(Class.property=certainvalue & Class.property=something | Class.property=sss) -> conditions and
+        
+        orderby((Class_property=[asc or desc] ommit means asc)*)
+        limit(start, max)
+        
+        select() -> return a dict
+        count() -> return how many rows does the table have
+        
   '''
-  pass
+  __tablenames__ = []
+  __tablealias__ = []
+  __tablemeta__ = []
+  __sqlstmt = None
+  __sqlargs = []
+  __sqlnamedargs = {}
+  __ret_cols = None
+  __order = None
+  __limit = None
+  __where = None
+  
+  def __init__(self, *args):
+    assert args is not None and len(args) > 0, 'Only can create view by objects and tablenames'
+    for x in args:
+      if isinstance(x, str):
+        self.__tablenames__.append(x)
+      else:
+        self.__tablenames__.append(x.__table__)
+        self.__tablealias__.append(x.__name__)
+        self.__tablemeta__.append(x.__mappings__)
+    
+  
+  def limit(self, start, max):
+    limit_sql = "limit {0}, {1}"
+    self.__limit = limit_sql.format(start, max)
+    return self
+    
+  @classmethod
+  def sql(cls, stmt, *args, **kw):
+    self.__sqlstmt = stmt
+    self.__sqlargs = args
+    
+  def all_columns(self):
+    cols = []
+    for t_alias, t_meta in zip(self.__tablealias__, self.__tablemeta__):
+      cols.append(','.join(["{0}.{1} as '{0}.{1}'".format(t_alias, x) for x in t_meta.iterkeys()]))
+    return ','.join(cols)  
+  
+  def orderby(self, *args, **kw):
+    order_sql = self.__order is None and "order by %s" or ", %s"
+    print kw['asc']
+    order = (kw.has_key('asc') and kw['asc']) and 'asc' or 'desc'
+    fields = []
+    tn = len(self.__tablenames__)
+    for x in args:
+      if tn > 1 and isinstance(x, FilterClass):
+        fields.append(x.get_aliasedname())
+      else:
+        fields.append(x.get_name())
+    self.__order = order_sql % ','.join(["%s %s" % (x, order) for x in fields])
+    return self
+  
+  def select(self):
+    sql = "select {} from {} {} {} {}"
+    tables = None
+    if len(self.__tablenames__) > 1:
+      cols = self.all_columns()
+      tables = ','.join(['%s as %s' % (x, y) for x, y in zip(self.__tablenames__, self.__tablealias__)])
+    else:  
+      cols = ','.join(self.__ret_cols) if self.__ret_cols is not None else '*'  
+      tables = ','.join(self.__tablenames__)
+    where = self.__where if self.__where is not None else ''
+    order = self.__order if self.__order is not None else ''
+    limit = self.__limit if self.__limit is not None else ''
+    sql = sql.format(cols, tables, where, order, limit)
 
+    def handler(cur):
+      cols = cur.column_names
+      rows = cur.fetchall()
+      return [FilterDict(zip(cols, row)) for row in rows]
+      
+    ret = []
+    with mysqldb.connect() as conn:
+      try:
+        if len(self.__sqlargs) > 0:
+          ret = conn.select(sql, *self.__sqlargs, handler=handler)
+        elif len(self.__sqlnamedargs) > 0:
+          ret = conn.select(sql, self.__sqlnamedargs, handler=handler)
+        else:
+          ret = conn.select(sql, handler=handler)
+        return ret
+      except:
+        raise
+  
+  def filter(self, filters, **kw):
+    
+    filter_sql = self.__where is None and "where%s" or "and%s"
+    
+    conditions = []
+    tn = len(self.__tablenames__)
+    
+    for f in filters:
+      
+      fstr, value = f.tofilter(tn>1)
+      conditions.append("%s %s" % (f.get_concatsign(), fstr))
+
+      if f.get_op() == 'in':
+        self.__sqlargs += value
+      elif value is not None and not isinstance(value, FilterClass):
+        self.__sqlnamedargs[f.get_valuename()] = value
+        
+    self.__where = filter_sql % (' '.join(conditions))
+    
+    return self
+    
+  def __str__(self):
+    return 'View %s' % self.__tablenames__
+    
+  __repr__ = __str__
+    
 if '__main__' == __name__:
   from model import *
-  mysqldb.create_db()
-  User._build_table()
-  print User.listall()
-  user = User(id=1, name="Jacky", remark="Jacky is a gay")
-  user.insert()
-  user2 = User(name='Lily', remark="Nice Girl!")
-  user2.insert()
-  print User.listall()
+  #filters = (User.id >= 1) & (User.id <= 10) & (Topic.id != 50) | (User.name == 'User')
+
+  #v = View(User, Topic).filter(User.id == Topic.post_by).orderby(Topic.create_time, asc=False).limit(0,20).select()
+  v = View(Topic).filter(Topic.post_by == 1).select()
+  logger.info(v)
+  
+  #print v._View__sqlnamedargs
+
+
   if False:
+    
+    mysqldb.create_db()
+    User._build_table()
+
     user = User(id=1, name="Jacky", remark="Jacky is a gay")
     user.id = 2
     user['remark']='Jack is a homosexual man'
