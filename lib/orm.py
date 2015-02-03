@@ -255,6 +255,8 @@ class FilterClass(object):
     
     if self.__op == 'in':
       filterstr = "{0} {1} ({2})".format(property, self.__op, ','.join(['%s' for x in self.__value]))
+    elif isinstance(self.__value, FilterClass):
+      filterstr = "{0} {1} {2}".format(self.get_aliasedname(), self.__op, self.__value.get_aliasedname())
     else:
       filterstr = "{0} {1} %({2})s".format(property, self.__op, self.get_valuename())
     return (filterstr, self.__value)
@@ -382,7 +384,7 @@ class View(object):
         view = View.join(['tablename', 'join_key']+) 
       
       Useful methods:
-        filter(Class.property=certainvalue) -> conditions and
+        filter(Class.property=certainvalue & Class.property=something | Class.property=sss) -> conditions and
         
         orderby((Class_property=[asc or desc] ommit means asc)*)
         limit(start, max)
@@ -392,7 +394,7 @@ class View(object):
         
   '''
   __tablenames__ = []
-  
+  __tablealias__ = []
   __sqlstmt = None
   __sqlargs = []
   __sqlnamedargs = {}
@@ -406,7 +408,8 @@ class View(object):
         self.__tablenames__.append(x)
       else:
         self.__tablenames__.append(x.__table__)
-
+        self.__tablealias__.append(x.__name__)
+        
   @classmethod
   def sql(cls, stmt, *args, **kw):
     self.__sqlstmt = stmt
@@ -421,23 +424,53 @@ class View(object):
       
     __ret_cols = _cols
     return self
-    
+  
+  def select(self):
+    sql = "select {} from {} {}"
+    cols = ','.join(self.__ret_cols) if self.__ret_cols is not None else '*'
+    tables = None
+    if len(self.__tablenames__) > 1:
+      tables = ','.join(['%s as %s' % (x, y) for x, y in zip(self.__tablenames__, self.__tablealias__)])
+    else:  
+      tables = ','.join(self.__tablenames__)
+    where = self.__where if self.__where is not None else ''
+    sql = sql.format(cols, tables, where)
+
+    def handler(cur):
+      cols = cur.column_names
+      rows = cur.fetchall()
+      return [dict(zip(cols, row)) for row in rows]
+      
+    ret = []
+    with mysqldb.connect() as conn:
+      try:
+        if len(self.__sqlargs) > 0:
+          ret = conn.select(sql, *self.__sqlargs, handler=handler)
+        elif len(self.__sqlnamedargs) > 0:
+          ret = conn.select(sql, self.__sqlnamedargs, handler=handler)
+        else:
+          ret = conn.select(sql, handler=handler)
+        return ret
+      except:
+        raise
+  
   def filter(self, filters, **kw):
     
-    filter_sql = self.__where is None and " where %s" or " and %s"
+    filter_sql = self.__where is None and "where%s" or "and%s"
     
     conditions = []
+    tn = len(self.__tablenames__)
     
     for f in filters:
       
-      fstr, value = f.tofilter()
-      conditions.append("%s %s" % (fstr, f.get_concatsign()))
+      fstr, value = f.tofilter(tn>1)
+      conditions.append("%s %s" % (f.get_concatsign(), fstr))
 
-      if filter.get_op() == 'in':
-        __sqlargs += value
-      else:
-        __sqlnamedargs[f.get_valuename()] = value
-    
+      if f.get_op() == 'in':
+        self.__sqlargs += value
+      elif value is not None and not isinstance(value, FilterClass):
+        self.__sqlnamedargs[f.get_valuename()] = value
+        
     self.__where = filter_sql % (' '.join(conditions))
     
     return self
@@ -449,10 +482,11 @@ class View(object):
     
 if '__main__' == __name__:
   from model import *
-  filters = (User.id >= 1) & (User.id <= 10) | (User.id != 50) | (User.name == 'User')
-  
-  for f in filters:
-    print f.tofilter()
+  #filters = (User.id >= 1) & (User.id <= 10) & (Topic.id != 50) | (User.name == 'User')
+
+  print View(User).filter(User.id == 1).select()
+  #print v._View__sqlnamedargs
+
 
   if False:
     
