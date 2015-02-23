@@ -125,7 +125,7 @@ _RESPONSE_STATUSES = {
     510: 'Not Extended',
 }
 
-_RE_RESPONSE_STATUS = re.compile(r'^\d\d\d(\ [\w\ ]+)?$') #Todo: Why?!
+_RE_RESPONSE_STATUS = re.compile(r'^\d\d\d(\ [\w\ ]+)?$')
 
 _RESPONSE_HEADERS = (
     'Accept-Ranges',
@@ -517,7 +517,7 @@ class Response(object):
     self.set_header('CONTENT-LENGTH', str(value))
 
   def delete_cookie(self, name):
-    pass
+    set_cookie(name, '__deleted__', max_age=0)
 
   def set_cookie(self, name, value, max_age=None, expires=None, \
                  path='/', domain=None, secure=False, http_only=True):
@@ -615,8 +615,7 @@ def view(path):
     def _wrapper(*args, **kw):
       r = func(*args, **kw)
       if isinstance(r, dict):
-        logger.info('return Template')
-        logger.info(Template)
+        logger.info('return Template(path=%s)' % path)
         return Template(path, **r)
       raise ValueError('Excepted return a dict when using @view decorator')
     return _wrapper
@@ -763,7 +762,6 @@ class WSGIApplication(object):
       response = ctx.response = Response()
       try:
         r = fn_exec()
-        print (type(r), Template)
         if isinstance(r, Template):
           r = self._template_engine(r.template_name, r.model)
         if isinstance(r, unicode):

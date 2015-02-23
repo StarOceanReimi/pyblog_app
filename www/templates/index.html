@@ -5,6 +5,9 @@
 	<title>Index</title>
 </head>
 <body>
-	<h1>Hello Welcome to Index page!</h1>
+	<h1>Hello {{name}}, Welcome to Index page!</h1>
+  {%for x in range(10)%}
+    {{x}}<br/>
+  {%endfor%}
 </body>
 </html>

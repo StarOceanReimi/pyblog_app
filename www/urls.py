@@ -5,4 +5,4 @@ from web import *
 @view('index.html')
 @get('/')
 def index():
-  return dict()
+  return dict(name='Q')
