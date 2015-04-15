@@ -1,3 +1,3 @@
 # pyblog_app
 
-For the purpose of studying python!
+For studying python!
